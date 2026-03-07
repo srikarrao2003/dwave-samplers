@@ -16,19 +16,24 @@
 
 #include <cstdint>
 #include <math.h>
+#include <atomic>
+#include <thread>
 #include <vector>
 #include <stdexcept>
-#include "cpu_sa.h"
+#include "fast_cpu_sa.h"
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 // xorshift128+ as defined https://en.wikipedia.org/wiki/Xorshift#xorshift.2B
 #define FASTRAND(rand) do {                       \
-    uint64_t x = rng_state[0];                    \
-    uint64_t const y = rng_state[1];              \
-    rng_state[0] = y;                             \
+    uint64_t x = fast_rng_state[0];                    \
+    uint64_t const y = fast_rng_state[1];              \
+    fast_rng_state[0] = y;                             \
     x ^= x << 23;                                 \
-    rng_state[1] = x ^ y ^ (x >> 17) ^ (y >> 26); \
-    rand = rng_state[1] + y;                      \
+    fast_rng_state[1] = x ^ y ^ (x >> 17) ^ (y >> 26); \
+    rand = fast_rng_state[1] + y;                      \
 } while (0)
 
 #define RANDMAX ((uint64_t)-1L)
@@ -36,7 +41,7 @@
 using namespace std;
 
 // this holds the state of our thread-safe/local RNG
-thread_local uint64_t rng_state[2];
+thread_local uint64_t fast_rng_state[2];
 
 // Returns the energy delta from flipping variable at index `var`
 // @param var the index of the variable to flip
@@ -49,7 +54,7 @@ thread_local uint64_t rng_state[2];
 //     neighbour_couplings[i][j] is the J value or weight on the coupling
 //     between variables i and neighbors[i][j].
 // @return delta energy
-double get_flip_energy(
+double fast_get_flip_energy(
     int var,
     std::int8_t *state,
     const vector<double>& h,
@@ -89,7 +94,7 @@ double get_flip_energy(
 //        sweeps at.
 // @return Nothing, but `state` now contains the result of the run.
 template <VariableOrder varorder, Proposal proposal_acceptance_criteria>
-void simulated_annealing_run(
+void fast_simulated_annealing_run(
     std::int8_t* state,
     const vector<double>& h,
     const vector<int>& degrees,
@@ -109,7 +114,7 @@ void simulated_annealing_run(
     // build the delta_energy array by getting the delta energy for each
     // variable
     for (int var = 0; var < num_vars; var++) {
-        delta_energy[var] = get_flip_energy(var, state, h, degrees,
+        delta_energy[var] = fast_get_flip_energy(var, state, h, degrees,
                                             neighbors, neighbour_couplings);
     }
 
@@ -205,7 +210,7 @@ void simulated_annealing_run(
 //        couplers in the same order as coupler_starts and coupler_ends
 // @return A double corresponding to the energy for `state` on the problem
 //        defined by h and the couplers passed in
-double get_state_energy(
+double fast_get_state_energy(
     std::int8_t* state,
     const vector<double>& h,
     const vector<int>& coupler_starts,
@@ -224,7 +229,26 @@ double get_state_energy(
     return energy;
 }
 
-// Perform simulated annealing on a general problem
+template <VariableOrder varorder, Proposal proposal_acceptance_criteria>
+void run_one_sample(
+    std::int8_t* state,
+    double* energy,
+    const vector<double>& h,
+    const vector<int>& degrees,
+    const vector<vector<int>>& neighbors,
+    const vector<vector<double>>& neighbour_couplings,
+    const vector<int>& coupler_starts,
+    const vector<int>& coupler_ends,
+    const vector<double>& coupler_weights,
+    const int sweeps_per_beta,
+    const vector<double>& beta_schedule
+) {
+    fast_simulated_annealing_run<varorder, proposal_acceptance_criteria>(
+        state, h, degrees, neighbors, neighbour_couplings, sweeps_per_beta, beta_schedule);
+    *energy = fast_get_state_energy(state, h, coupler_starts, coupler_ends, coupler_weights);
+}
+
+// Perform Fast CPU simulated annealing on a general problem
 // @param states a int8 array of size num_samples * number of variables in the
 //        problem. Will be overwritten by this function as samples are filled
 //        in. The initial state of the samples are used to seed the simulated
@@ -248,7 +272,7 @@ double get_state_energy(
 //        if the function returns True then it will stop running.
 // @param interrupt_function A pointer to contents that are passed to interrupt_callback.
 // @return the number of samples taken. If no interrupt occured, will equal num_samples.
-int cpu_general_simulated_annealing(
+int fast_cpu_general_simulated_annealing(
     std::int8_t* states,
     double* energies,
     const int num_samples,
@@ -275,11 +299,6 @@ int cpu_general_simulated_annealing(
                 (coupler_starts.size() == coupler_weights.size()))) {
         throw runtime_error("coupler vectors have mismatched lengths");
     }
-
-    // set the seed of the RNG
-    // note that xorshift+ requires a non-zero seed
-    rng_state[0] = seed ? seed : RANDMAX;
-    rng_state[1] = 0;
 
     // degrees will be a vector of the degrees of each variable
     vector<int> degrees(num_vars, 0);
@@ -314,47 +333,71 @@ int cpu_general_simulated_annealing(
     }
 
 
-    // get the simulated annealing samples
-    int sample = 0;
-    while (sample < num_samples) {
-        // states is a giant spin array that will hold the resulting states for
-        // all the samples, so we need to get the location inside that vector
-        // where we will store the sample for this sample
-        std::int8_t *state = states + sample*num_vars;
-        // then do the actual sample. this function will modify state, storing
-        // the sample there
-	// Branching here is designed to make expicit compile time optimizations
+    // Python callbacks from a multithreaded backend are unsafe/non-deterministic;
+    // preserve existing semantics by refusing fast mode when callback is set.
+    if (interrupt_function != nullptr) return -2;
+
+    // Parallelize independent reads (`num_samples`) with either OpenMP or
+    // std::thread, while preserving deterministic per-sample seeds.
+    auto run_sample = [&](int sample) {
+        fast_rng_state[0] = seed ? (seed + static_cast<uint64_t>(sample) + 1) : RANDMAX;
+        fast_rng_state[1] = static_cast<uint64_t>(sample) ^ 0x9E3779B97F4A7C15ULL;
+        std::int8_t* state = states + sample * num_vars;
+
         if (varorder == Random) {
             if (proposal_acceptance_criteria == Metropolis) {
-                simulated_annealing_run<Random, Metropolis>(state, h, degrees,
-                                                    neighbors, neighbour_couplings,
-                                                    sweeps_per_beta, beta_schedule);
+                run_one_sample<Random, Metropolis>(
+                    state, energies + sample, h, degrees, neighbors, neighbour_couplings,
+                    coupler_starts, coupler_ends, coupler_weights, sweeps_per_beta, beta_schedule);
             } else {
-                simulated_annealing_run<Random, Gibbs>(state, h, degrees,
-                                                     neighbors, neighbour_couplings,
-                                                     sweeps_per_beta, beta_schedule);
-          }
+                run_one_sample<Random, Gibbs>(
+                    state, energies + sample, h, degrees, neighbors, neighbour_couplings,
+                    coupler_starts, coupler_ends, coupler_weights, sweeps_per_beta, beta_schedule);
+            }
         } else {
             if (proposal_acceptance_criteria == Metropolis) {
-                simulated_annealing_run<Sequential, Metropolis>(state, h, degrees,
-                                                     neighbors, neighbour_couplings,
-                                                     sweeps_per_beta, beta_schedule);
+                run_one_sample<Sequential, Metropolis>(
+                    state, energies + sample, h, degrees, neighbors, neighbour_couplings,
+                    coupler_starts, coupler_ends, coupler_weights, sweeps_per_beta, beta_schedule);
             } else {
-                simulated_annealing_run<Sequential, Gibbs>(state, h, degrees,
-                                                      neighbors, neighbour_couplings,
-                                                      sweeps_per_beta, beta_schedule);
+                run_one_sample<Sequential, Gibbs>(
+                    state, energies + sample, h, degrees, neighbors, neighbour_couplings,
+                    coupler_starts, coupler_ends, coupler_weights, sweeps_per_beta, beta_schedule);
             }
         }
-        // compute the energy of the sample and store it in `energies`
-        energies[sample] = get_state_energy(state, h, coupler_starts,
-                                            coupler_ends, coupler_weights);
+    };
 
-        sample++;
+#ifdef _OPENMP
+    if (num_samples > 10000) {
+        #pragma omp parallel for schedule(static)
+        for (int sample = 0; sample < num_samples; ++sample) {
+            run_sample(sample);
+        }
+        return num_samples;
+    }
+#endif
 
-        // if interrupt_function returns true, stop sampling
-        if (interrupt_function && interrupt_callback(interrupt_function)) break;
+    int thread_count = static_cast<int>(std::thread::hardware_concurrency());
+    if (thread_count < 1) thread_count = 1;
+    if (thread_count > num_samples) thread_count = num_samples;
+
+    if (thread_count <= 1) {
+        for (int sample = 0; sample < num_samples; ++sample) run_sample(sample);
+    } else {
+        std::atomic<int> next_sample{0};
+        vector<std::thread> workers;
+        workers.reserve(thread_count);
+        for (int t = 0; t < thread_count; ++t) {
+            workers.emplace_back([&]() {
+                while (true) {
+                    int sample = next_sample.fetch_add(1);
+                    if (sample >= num_samples) break;
+                    run_sample(sample);
+                }
+            });
+        }
+        for (auto& worker : workers) worker.join();
     }
 
-    // return the number of samples we actually took
-    return sample;
+    return num_samples;
 }

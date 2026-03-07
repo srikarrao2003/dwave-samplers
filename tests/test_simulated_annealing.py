@@ -155,6 +155,26 @@ class TestSA(unittest.TestCase):
             "Sampler returned wrong number of energies",
         )
 
+    def test_backend_fast_cpu_sa(self):
+        num_variables, num_samples = 10, 20
+        problem = self._sample_fm_problem(
+            num_variables=num_variables, num_samples=num_samples
+        )
+
+        samples, energies = simulated_annealing(*problem, sa_backend="fast_cpu_sa")
+        self.assertEqual(samples.shape, (num_samples, num_variables))
+        self.assertEqual(energies.shape, (num_samples,))
+
+    def test_backend_invalid(self):
+        problem = self._sample_fm_problem(num_variables=6, num_samples=5)
+        with self.assertRaises(ValueError):
+            simulated_annealing(*problem, sa_backend="invalid_backend")
+
+    def test_backend_gpu_without_cuda(self):
+        problem = self._sample_fm_problem(num_variables=6, num_samples=5)
+        with self.assertRaises(RuntimeError):
+            simulated_annealing(*problem, sa_backend="gpu_sa")
+
     def test_good_results(self):
         num_variables = 5
         problem = self._sample_fm_problem(num_variables=num_variables)

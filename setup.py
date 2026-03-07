@@ -15,6 +15,7 @@
 from setuptools import setup, Extension
 from Cython.Build import cythonize
 from setuptools.command.build_ext import build_ext
+import platform
 
 import dimod
 import numpy
@@ -38,11 +39,19 @@ class build_ext_with_args(build_ext):
 
         compile_args = self.extra_compile_args[compiler]
         for ext in self.extensions:
-            ext.extra_compile_args = compile_args
+            ext.extra_compile_args = list(compile_args)
 
         link_args = self.extra_link_args[compiler]
         for ext in self.extensions:
-            ext.extra_compile_args = link_args
+            ext.extra_link_args = list(link_args)
+
+        for ext in self.extensions:
+            if ext.name == 'dwave.samplers.sa.simulated_annealing':
+                if compiler == 'msvc':
+                    ext.extra_compile_args.append('/openmp')
+                elif compiler == 'unix' and platform.system() != 'Darwin':
+                    ext.extra_compile_args.append('-fopenmp')
+                    ext.extra_link_args.append('-fopenmp')
 
         super().build_extensions()
 
