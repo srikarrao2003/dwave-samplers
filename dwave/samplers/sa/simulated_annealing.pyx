@@ -211,10 +211,18 @@ def simulated_annealing(num_samples, h, coupler_starts, coupler_ends,
     else:
         _interrupt_function = <void *>interrupt_function
 
-    cdef bytes _backend = sa_backend.encode("ascii")
+    cdef int _backend_kind = -1
+    if sa_backend == 'cpu_sa':
+        _backend_kind = 0
+    elif sa_backend == 'fast_cpu_sa':
+        _backend_kind = 1
+    elif sa_backend == 'gpu_sa':
+        _backend_kind = 2
+
+    cdef int num = -1
 
     with nogil:
-        if _backend == b'cpu_sa':
+        if _backend_kind == 0:
             num = cpu_general_simulated_annealing(_states,
                                                   _energies,
                                                   _num_samples,
@@ -229,7 +237,7 @@ def simulated_annealing(num_samples, h, coupler_starts, coupler_ends,
                                                   _proposal_acceptance_criteria,
                                                   interrupt_callback,
                                                   _interrupt_function)
-        elif _backend == b'fast_cpu_sa':
+        elif _backend_kind == 1:
             num = fast_cpu_general_simulated_annealing(_states,
                                                        _energies,
                                                        _num_samples,
@@ -244,7 +252,7 @@ def simulated_annealing(num_samples, h, coupler_starts, coupler_ends,
                                                        _proposal_acceptance_criteria,
                                                        interrupt_callback,
                                                        _interrupt_function)
-        elif _backend == b'gpu_sa':
+        elif _backend_kind == 2:
             num = gpu_general_simulated_annealing(_states,
                                                   _energies,
                                                   _num_samples,
@@ -268,6 +276,17 @@ def simulated_annealing(num_samples, h, coupler_starts, coupler_ends,
         raise ValueError("interrupt_function is not supported with sa_backend='fast_cpu_sa'")
     if num == -3:
         raise RuntimeError("sa_backend='gpu_sa' requested, but this build was compiled without CUDA support")
+    if num == -4:
+        raise ValueError(
+            "gpu_sa currently supports only randomize_order=False and "
+            "proposal_acceptance_criteria='Metropolis'"
+        )
+    if num == -6:
+        raise RuntimeError("gpu_sa CUDA runtime failure (allocation/transfer/kernel)")
+    if num == -5:
+        raise RuntimeError("gpu_sa could not find a CUDA device")
+    if num <= -1000:
+        raise RuntimeError(f"gpu_sa CUDA runtime failure with cudaError code {-1000 - num}")
 
 
     # discard the noise if we were interrupted
