@@ -167,7 +167,7 @@ class SimulatedAnnealingSampler(dimod.Sampler, dimod.Initialized):
                initial_states_generator: InitialStateGenerator = "random",
                randomize_order: bool = False,
                proposal_acceptance_criteria: str = 'Metropolis',
-               sa_backend: str = 'cpu_sa',
+               sa_backend: str = 'fast_cpu_sa',
                **kwargs) -> dimod.SampleSet:
         r"""Sample from a binary quadratic model.
 
