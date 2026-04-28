@@ -1,6 +1,6 @@
 # distutils: language = c++
 # distutils: include_dirs = dwave/samplers/sa/src/
-# distutils: sources = dwave/samplers/sa/src/cpu_sa.cpp dwave/samplers/sa/src/fast_cpu_sa.cpp dwave/samplers/sa/src/gpu_sa.cpp
+# distutils: sources = dwave/samplers/sa/src/cpu_sa.cpp dwave/samplers/sa/src/fast_cpu_sa.cpp
 # cython: language_level = 3
 
 # Copyright 2018 D-Wave Systems Inc.
@@ -62,24 +62,6 @@ cdef extern from "fast_cpu_sa.h":
             const Proposal proposal_acceptance_criteria,
             callback interrupt_callback,
             void *interrupt_function) nogil
-
-cdef extern from "gpu_sa.h":
-    int gpu_general_simulated_annealing(
-            np.int8_t* samples,
-            double* energies,
-            const int num_samples,
-            const vector[double] & h,
-            const vector[int] & coupler_starts,
-            const vector[int] & coupler_ends,
-            const vector[double] & coupler_weights,
-            const int sweeps_per_beta,
-            const vector[double] & beta_schedule,
-            const unsigned long long seed,
-            const VariableOrder varorder,
-            const Proposal proposal_acceptance_criteria,
-            callback interrupt_callback,
-            void *interrupt_function) nogil
-
 
 def simulated_annealing(num_samples, h, coupler_starts, coupler_ends,
                         coupler_weights, sweeps_per_beta, beta_schedule, seed,
@@ -159,7 +141,7 @@ def simulated_annealing(num_samples, h, coupler_starts, coupler_ends,
         Metropolis-Hastings criteria.
 
     sa_backend: str
-        Backend implementation: ``'cpu_sa'``, ``'fast_cpu_sa'``, or ``'gpu_sa'``.
+        Backend implementation: ``'cpu_sa'``, ``'fast_cpu_sa'``.
 
     Returns
     -------
@@ -216,8 +198,6 @@ def simulated_annealing(num_samples, h, coupler_starts, coupler_ends,
         _backend_kind = 0
     elif sa_backend == 'fast_cpu_sa':
         _backend_kind = 1
-    elif sa_backend == 'gpu_sa':
-        _backend_kind = 2
 
     cdef int num = -1
 
@@ -252,21 +232,6 @@ def simulated_annealing(num_samples, h, coupler_starts, coupler_ends,
                                                        _proposal_acceptance_criteria,
                                                        interrupt_callback,
                                                        _interrupt_function)
-        elif _backend_kind == 2:
-            num = gpu_general_simulated_annealing(_states,
-                                                  _energies,
-                                                  _num_samples,
-                                                  _h,
-                                                  _coupler_starts,
-                                                  _coupler_ends,
-                                                  _coupler_weights,
-                                                  _sweeps_per_beta,
-                                                  _beta_schedule,
-                                                  _seed,
-                                                  _varorder,
-                                                  _proposal_acceptance_criteria,
-                                                  interrupt_callback,
-                                                  _interrupt_function)
         else:
             num = -1
 
@@ -274,20 +239,6 @@ def simulated_annealing(num_samples, h, coupler_starts, coupler_ends,
         raise ValueError(f"Unknown sa_backend: {sa_backend}")
     if num == -2:
         raise ValueError("interrupt_function is not supported with sa_backend='fast_cpu_sa'")
-    if num == -3:
-        raise RuntimeError("sa_backend='gpu_sa' requested, but this build was compiled without CUDA support")
-    if num == -4:
-        raise ValueError(
-            "gpu_sa currently supports only randomize_order=False and "
-            "proposal_acceptance_criteria='Metropolis'"
-        )
-    if num == -6:
-        raise RuntimeError("gpu_sa CUDA runtime failure (allocation/transfer/kernel)")
-    if num == -5:
-        raise RuntimeError("gpu_sa could not find a CUDA device")
-    if num <= -1000:
-        raise RuntimeError(f"gpu_sa CUDA runtime failure with cudaError code {-1000 - num}")
-
 
     # discard the noise if we were interrupted
     return states_numpy[:num], energies_numpy[:num]

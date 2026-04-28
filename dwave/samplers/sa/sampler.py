@@ -269,7 +269,7 @@ class SimulatedAnnealingSampler(dimod.Sampler, dimod.Initialized):
 
             sa_backend:
                 Simulated annealing engine implementation. Supported values:
-                ``"cpu_sa"`` (default), ``"fast_cpu_sa"``, and ``"gpu_sa"``.
+                ``"cpu_sa"`` (default), ``"fast_cpu_sa"``.
 
             interrupt_function (function, optional):
                 A function called with no parameters between each sample of
@@ -375,9 +375,9 @@ class SimulatedAnnealingSampler(dimod.Sampler, dimod.Initialized):
             error_msg = "'num_sweeps_per_beta' should be a positive integer: value = {}".format(num_sweeps_per_beta)
             raise ValueError(error_msg)
 
-        if sa_backend not in ("cpu_sa", "fast_cpu_sa", "gpu_sa"):
+        if sa_backend not in ("cpu_sa", "fast_cpu_sa"):
             raise ValueError(
-                "'sa_backend' must be one of 'cpu_sa', 'fast_cpu_sa', or 'gpu_sa': "
+                "'sa_backend' must be one of 'cpu_sa', 'fast_cpu_sa': "
                 f"value = {sa_backend}"
             )
 

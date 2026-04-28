@@ -95,39 +95,6 @@ def cpu_count():
 
 
 class TestSA(unittest.TestCase):
-    @staticmethod
-    def _cuda_available():
-        try:
-            ctypes.CDLL("libcudart.so")
-        except OSError:
-            return False
-
-    def _require_gpu_backend_usable(self):
-        if not self._cuda_available():
-            self.skipTest("CUDA runtime/device not available")
-
-        # Minimal smoke test to ensure CUDA runtime calls are usable in this
-        # execution environment (some sandboxes expose nvidia-smi but block CUDA runtime).
-        problem = self._sample_fm_problem(num_variables=2, num_samples=1, num_sweeps=1)
-        try:
-            simulated_annealing(*problem, sa_backend="gpu_sa")
-        except RuntimeError as err:
-            msg = str(err)
-            if "cudaError code 304" in msg:
-                self.skipTest("CUDA runtime not usable in current execution environment (cudaError 304)")
-            raise
-
-        try:
-            proc = subprocess.run(
-                ["nvidia-smi", "-L"],
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            return proc.returncode == 0 and "GPU" in proc.stdout
-        except Exception:
-            return False
 
     def _sample_fm_problem(self, num_variables=10, num_samples=100, num_sweeps=1000):
         h = [-1] * num_variables
@@ -205,96 +172,6 @@ class TestSA(unittest.TestCase):
         problem = self._sample_fm_problem(num_variables=6, num_samples=5)
         with self.assertRaises(ValueError):
             simulated_annealing(*problem, sa_backend="invalid_backend")
-
-    def test_backend_gpu_without_cuda(self):
-        if self._cuda_available():
-            self.skipTest("CUDA available on this host")
-        problem = self._sample_fm_problem(num_variables=6, num_samples=5)
-        with self.assertRaises(RuntimeError):
-            simulated_annealing(*problem, sa_backend="gpu_sa")
-
-    def test_backend_gpu_cuda_basic(self):
-        self._require_gpu_backend_usable()
-
-        num_variables, num_samples = 10, 25
-        problem = self._sample_fm_problem(
-            num_variables=num_variables, num_samples=num_samples
-        )
-        samples, energies = simulated_annealing(*problem, sa_backend="gpu_sa")
-
-        self.assertEqual(samples.shape, (num_samples, num_variables))
-        self.assertEqual(energies.shape, (num_samples,))
-        self.assertTrue(set(np.unique(samples)).issubset({-1, 1}))
-
-    def test_backend_gpu_cuda_seed_determinism(self):
-        self._require_gpu_backend_usable()
-
-        num_variables, num_samples = 10, 30
-        problem = self._sample_fm_problem(
-            num_variables=num_variables, num_samples=num_samples
-        )
-        samples0, energies0 = simulated_annealing(*problem, sa_backend="gpu_sa")
-        # pass fresh copy of initial states to avoid in-place mutation effects
-        problem2 = list(problem)
-        problem2[-1] = np.copy(problem[-1])
-        samples1, energies1 = simulated_annealing(*problem2, sa_backend="gpu_sa")
-
-        self.assertTrue(np.array_equal(samples0, samples1))
-        self.assertTrue(np.array_equal(energies0, energies1))
-
-    def test_backend_gpu_cuda_energy_consistency(self):
-        self._require_gpu_backend_usable()
-
-        (
-            num_samples,
-            h,
-            coupler_starts,
-            coupler_ends,
-            coupler_weights,
-            sweeps_at_beta,
-            beta_schedule,
-            seed,
-            initial_states,
-        ) = self._sample_fm_problem(num_variables=8, num_samples=20)
-
-        samples, energies = simulated_annealing(
-            num_samples,
-            h,
-            coupler_starts,
-            coupler_ends,
-            coupler_weights,
-            sweeps_at_beta,
-            beta_schedule,
-            seed,
-            initial_states,
-            sa_backend="gpu_sa",
-        )
-
-        recomputed = []
-        for sample in samples:
-            e = float(np.dot(sample, np.asarray(h)))
-            for u, v, w in zip(coupler_starts, coupler_ends, coupler_weights):
-                e += sample[u] * w * sample[v]
-            recomputed.append(e)
-        recomputed = np.asarray(recomputed, dtype=np.float64)
-
-        self.assertTrue(np.allclose(energies, recomputed, atol=1e-9))
-
-    def test_backend_gpu_cuda_unsupported_modes(self):
-        if not self._cuda_available():
-            self.skipTest("CUDA runtime/device not available")
-
-        problem = self._sample_fm_problem(num_variables=7, num_samples=12)
-
-        with self.assertRaises(ValueError):
-            simulated_annealing(*problem, randomize_order=True, sa_backend="gpu_sa")
-
-        with self.assertRaises(ValueError):
-            simulated_annealing(
-                *problem,
-                proposal_acceptance_criteria="Gibbs",
-                sa_backend="gpu_sa",
-            )
 
     def test_good_results(self):
         num_variables = 5

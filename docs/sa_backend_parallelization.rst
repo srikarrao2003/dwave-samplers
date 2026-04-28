@@ -17,8 +17,6 @@ The SA stack now supports three backend options exposed through Python:
 
 * ``cpu_sa``: baseline CPU backend (default).
 * ``fast_cpu_sa``: parallel CPU backend.
-* ``gpu_sa``: GPU backend entrypoint wired through C++/Cython (CUDA kernel
-  file present but currently a placeholder in this branch).
 
 Public API Changes
 ==================
@@ -31,7 +29,6 @@ Accepted values:
 
 * ``"cpu_sa"``
 * ``"fast_cpu_sa"``
-* ``"gpu_sa"``
 
 Validation is enforced in ``dwave/samplers/sa/sampler.py``.
 
@@ -50,13 +47,11 @@ Changes:
 
   * ``src/cpu_sa.cpp``
   * ``src/fast_cpu_sa.cpp``
-  * ``src/gpu_sa.cpp``
 
 * Added C extern declarations for:
 
   * ``cpu_general_simulated_annealing(...)``
   * ``fast_cpu_general_simulated_annealing(...)``
-  * ``gpu_general_simulated_annealing(...)``
 
 * Added ``sa_backend`` function argument to Python-facing
   ``simulated_annealing(...)`` wrapper.
@@ -67,8 +62,6 @@ Backend status/error codes returned by C++ and mapped in Cython:
 * ``-1``: unknown backend (raises ``ValueError``).
 * ``-2``: ``interrupt_function`` unsupported for ``fast_cpu_sa``
   (raises ``ValueError``).
-* ``-3``: ``gpu_sa`` requested without CUDA-enabled build
-  (raises ``RuntimeError``).
 
 C++ Backend Structure
 =====================
@@ -113,25 +106,6 @@ Implementation details:
 * ``interrupt_function`` is currently unsupported in this backend (returns
   status ``-2``).
 
-GPU backend plumbing
---------------------
-
-Files:
-
-* ``dwave/samplers/sa/src/gpu_sa.h``
-* ``dwave/samplers/sa/src/gpu_sa.cpp``
-* ``dwave/samplers/sa/src/gpu_sa.cu``
-
-Implementation details:
-
-* Backend entrypoint: ``gpu_general_simulated_annealing(...)``.
-* ``gpu_sa.cpp`` dispatches to ``gpu_general_simulated_annealing_cuda(...)``
-  only when compiled with ``DWAVE_SA_WITH_CUDA``.
-* Without CUDA-enabled compile flags, backend returns status ``-3`` and Python
-  raises ``RuntimeError``.
-* ``gpu_sa.cu`` is present as a kernel-integration placeholder and currently
-  throws if reached.
-
 Build-System Changes
 ====================
 
@@ -148,11 +122,6 @@ Changes:
 
   * MSVC: ``/openmp``
   * Unix (non-macOS): ``-fopenmp`` for compile and link
-
-Current CUDA status:
-
-* No CUDA compilation path is yet enabled in ``setup.py`` for ``.cu`` files.
-  GPU API plumbing exists; CUDA kernel build integration remains future work.
 
 Parallelization Validation Notes
 ================================
@@ -177,7 +146,6 @@ Coverage added:
 
 * ``fast_cpu_sa`` backend execution path.
 * invalid backend value handling.
-* ``gpu_sa`` failure path on non-CUDA builds.
 * sampler-level backend argument acceptance/validation.
 
 Verification performed:
