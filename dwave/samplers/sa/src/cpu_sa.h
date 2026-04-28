@@ -20,6 +20,8 @@
 #include <cstdint>
 #include <vector>
 
+namespace dwave::samplers::sa {
+
 #ifdef _MSC_VER
     // add uint64_t definition for windows
     typedef __int64 int64_t;
@@ -75,5 +77,7 @@ int cpu_general_simulated_annealing(
     callback interrupt_callback,
     void * const interrupt_function
 );
+
+}  // namespace dwave::samplers::sa
 
 #endif
