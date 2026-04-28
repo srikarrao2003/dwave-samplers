@@ -368,6 +368,10 @@ class SimulatedAnnealingSampler(dimod.Sampler, dimod.Initialized):
         if interrupt_function and not callable(interrupt_function):
             raise TypeError("'interrupt_function' should be a callable")
 
+        if interrupt_function is not None and sa_backend == "fast_cpu_sa":
+            # fast_cpu_sa does not support interrupt callbacks, so fall back to cpu_sa.
+            sa_backend = "cpu_sa"
+
         if not isinstance(num_sweeps_per_beta, Integral):
             error_msg = "'num_sweeps_per_beta' should be a positive integer: value = {}".format(num_sweeps_per_beta)
             raise TypeError(error_msg)
